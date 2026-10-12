@@ -31,6 +31,52 @@ flowchart LR
 
 ---
 
+## 🔄 System Workflows
+
+### 1. User Voice Interaction Workflow (Runtime Flow)
+
+This workflow outlines the continuous loop when a user interacts with the voice assistant on mobile:
+
+```mermaid
+flowchart TD
+    Start([User Opens PWA on Mobile]) --> TapMic[User Taps & Speaks into Microphone]
+    TapMic --> RecordAudio[MediaRecorder captures audio blob WebM/WAV]
+    RecordAudio --> SendAPI["POST /api/voice/interact/ (Audio Blob)"]
+    
+    subgraph Backend_Processing ["Django Backend Processing"]
+        SendAPI --> WhisperSTT["1. Whisper STT converts Audio -> Query Text"]
+        WhisperSTT --> VectorQuery["2. Embedding Model creates Query Vector"]
+        VectorQuery --> SearchPG["3. PostgreSQL (pgvector) finds Top-K Chunks"]
+        SearchPG --> BuildPrompt["4. Assemble Grounded Prompt (Context + Question)"]
+        BuildPrompt --> CallLLM["5. LLM generates concise Answer Text"]
+        CallLLM --> CleanText["6. Text Normalizer strips markdown/symbols"]
+        CleanText --> GenTTS["7. TTS Engine converts Text -> Speech (MP3)"]
+    end
+    
+    GenTTS --> ReturnJSON["Response: { audio_url, transcript, answer }"]
+    ReturnJSON --> FrontendAction["PWA receives response"]
+    FrontendAction --> DisplayChat["Displays User Question & AI Answer in Chat"]
+    FrontendAction --> AutoPlay["Auto-plays synthesized voice response on Mobile"]
+    AutoPlay --> End([User Listens & Can Speak Again])
+```
+
+---
+
+### 2. Knowledge Ingestion Workflow (Admin / Setup Flow)
+
+This workflow is executed when documents or knowledge are added or updated in the RAG pipeline:
+
+```mermaid
+flowchart LR
+    Upload["📄 Documents\n(PDF, TXT, MD, DOCX)"] --> Clean["1. Text Extraction\n& Normalization"]
+    Clean --> Chunk["2. Recursive Chunking\n(500-800 tokens, 10% overlap)"]
+    Chunk --> Embed["3. Embedding Model\n(1536-dim vector generation)"]
+    Embed --> Store[("4. PostgreSQL Database\n(pgvector table)")]
+    Store --> Index["5. HNSW Vector Index\n(Fast nearest-neighbor search)"]
+```
+
+---
+
 ## 🛠️ Technology Stack
 
 | Component | Selected Technology | Purpose & Rationale |
