@@ -4,172 +4,30 @@ An intelligent, low-latency AI Voice Assistant accessible on mobile devices via 
 
 ---
 
-## 📐 System Architecture
+## 📐 Simple Architecture
 
-### 1. High-Level Multi-Tier Architectural Diagram
-
-```mermaid
-graph TB
-    subgraph Client_Layer ["📱 Client Layer (Mobile PWA)"]
-        UI["Mobile Touch UI / Dark Mode"]
-        Mic["Microphone (MediaRecorder API)"]
-        Player["Audio Player & Visualizer (Web Audio API)"]
-        PWA_Worker["Service Worker & PWA Manifest"]
-    end
-
-    subgraph Ingress_Layer ["🌐 Ingress & Security Tier"]
-        DNS["Custom Domain (DNS A-Record)"]
-        SSL["Cloudflare / Let's Encrypt (HTTPS Required)"]
-        Nginx["Nginx Reverse Proxy & Static Cache"]
-    end
-
-    subgraph App_Layer ["⚙️ Django Backend Application Tier"]
-        WSGI["Gunicorn / Uvicorn ASGI Server"]
-        DRF["Django REST Framework API"]
-        AudioHandler["Audio Ingestion & Formats Converter"]
-        AuthThrottle["Rate Limiter & Session Manager"]
-    end
-
-    subgraph Voice_Layer ["🎙️ Speech Processing Services"]
-        STT["STT Engine: OpenAI Whisper / Groq Whisper"]
-        TTS["TTS Engine: gTTS / Edge-TTS"]
-        Cleaner["Markdown Stripper & Speech Text Normalizer"]
-    end
-
-    subgraph AI_RAG_Layer ["🧠 RAG & LLM Orchestration"]
-        Embedder["Embedding Generator (OpenAI / HuggingFace)"]
-        Retriever["pgvector Hybrid / Cosine Retriever"]
-        PromptBuilder["Grounding Prompt & History Assembler"]
-        LLM["LLM Engine (Gemini 2.0 Flash / GPT-4o-mini / Groq)"]
-    end
-
-    subgraph Data_Layer ["🐘 Data & Vector Persistence"]
-        PG["PostgreSQL Database"]
-        PGVector["pgvector Extension (HNSW / IVFFlat Index)"]
-        MediaStorage["Local / S3 Audio Media Storage"]
-        RedisCache["Redis (Sessions, Rate Limits & Vector Cache)"]
-    end
-
-    %% Connections
-    UI --> Mic
-    Mic -->|Audio Blob (WebM/WAV)| DNS
-    DNS --> SSL
-    SSL --> Nginx
-    Nginx --> WSGI
-    WSGI --> DRF
-    DRF --> AudioHandler
-    AudioHandler --> STT
-    STT -->|Transcribed Text| DRF
-    DRF --> Embedder
-    Embedder -->|Query Vector| Retriever
-    Retriever <--> PGVector
-    Retriever -->|Context Chunks| PromptBuilder
-    PromptBuilder --> LLM
-    LLM -->|Raw LLM Response| Cleaner
-    Cleaner --> TTS
-    TTS -->|MP3 / Audio Stream| MediaStorage
-    MediaStorage --> Nginx
-    Nginx -->|Audio URL + Text Transcript| Player
-    Player --> UI
-```
-
----
-
-### 2. End-to-End Voice Request Lifecycle (Sequence Diagram)
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor MobileUser as 📱 Mobile User
-    participant PWA as 🌐 Frontend (PWA)
-    participant Nginx as 🛡️ Nginx / SSL
-    participant Django as ⚙️ Django API
-    participant STT as 🎙️ Whisper STT
-    participant Embed as 🔢 Embedding Model
-    participant PGVector as 🐘 PostgreSQL (pgvector)
-    participant LLM as 🧠 LLM (Gemini/Groq)
-    participant TTS as 🔊 gTTS / Edge-TTS
-
-    MobileUser->>PWA: Taps Mic & Speaks (Press-to-Talk)
-    PWA->>PWA: Records audio chunks (MediaRecorder API)
-    MobileUser->>PWA: Releases Mic (Stop Recording)
-    PWA->>Nginx: POST /api/voice/interact/ (Audio Blob)
-    Nginx->>Django: Proxy request to Gunicorn/Django
-    Django->>STT: Send audio file for transcription
-    STT-->>Django: Returns transcribed query ("What are the admission requirements?")
-    Django->>Embed: Embed query text into 1536-dim vector
-    Embed-->>Django: Query vector array
-    Django->>PGVector: Cosine similarity query (SELECT ... ORDER BY embedding <=> query LIMIT 4)
-    PGVector-->>Django: Relevant knowledge base chunks
-    Django->>Django: Assemble Grounded System Prompt (Context + History + Query)
-    Django->>LLM: Stream or fetch completion
-    LLM-->>Django: Generated answer text
-    Django->>Django: Clean text (strip markdown symbols, bullets, URLs)
-    Django->>TTS: Synthesize cleaned speech text
-    TTS-->>Django: Output audio file (MP3/WAV)
-    Django-->>Nginx: Response payload (JSON: audio_url, transcript, answer_text)
-    Nginx-->>PWA: HTTP 200 OK
-    PWA->>MobileUser: Renders text in chat & auto-plays synthesized speech
-```
-
----
-
-### 3. Knowledge Base Ingestion Pipeline (RAG Setup)
+### High-Level System Flow
 
 ```mermaid
 flowchart LR
-    Docs["📄 Raw Documents (PDF, TXT, MD)"] --> Parser["Document Parser & Text Cleaner"]
-    Parser --> Chunker["Recursive Chunker (500-800 tokens, 10% overlap)"]
-    Chunker --> Embeddings["Embedding Model (text-embedding-3-small)"]
-    Embeddings --> VectorStore[("🐘 PostgreSQL + pgvector\n(HNSW Index for O(log N) lookup)")]
+    A["📱 Mobile PWA\n(Mic & Speaker)"] -->|1. Voice Audio| B["🎙️ STT\n(Whisper)"]
+    B -->|2. Query Text| C["⚙️ Django Backend\n(REST API)"]
+    
+    subgraph RAG ["🧠 Knowledge & AI"]
+        C <-->|3. Search & Retrieve| D[("🐘 PostgreSQL\n(pgvector)")]
+        C <-->|4. Prompt + Context| E["🤖 LLM Engine\n(Gemini / OpenAI / Groq)"]
+    end
+    
+    C -->|5. Answer Text| F["🔊 TTS\n(gTTS / Edge-TTS)"]
+    F -->|6. Voice Audio Response| A
 ```
 
----
+### How It Works (In 4 Simple Steps)
 
-### 4. Database Schema Architecture
-
-```mermaid
-erDiagram
-    KnowledgeDocument ||--o{ DocumentChunk : contains
-    ChatSession ||--o{ ChatMessage : records
-
-    KnowledgeDocument {
-        uuid id PK
-        string title
-        string source_type
-        text raw_content
-        datetime created_at
-    }
-
-    DocumentChunk {
-        uuid id PK
-        uuid document_id FK
-        text chunk_text
-        int token_count
-        vector_1536 embedding "Indexed with HNSW"
-        jsonb metadata
-    }
-
-    ChatSession {
-        uuid id PK
-        string session_token
-        string client_user_agent
-        datetime created_at
-    }
-
-    ChatMessage {
-        uuid id PK
-        uuid session_id FK
-        text user_transcript
-        string user_audio_path
-        text ai_response_text
-        string ai_audio_path
-        float latency_stt_sec
-        float latency_llm_sec
-        float latency_tts_sec
-        datetime timestamp
-    }
-```
+1. **Voice Input (STT)**: You speak into your mobile browser. The microphone records audio and sends it to the STT engine (Whisper) to convert into text.
+2. **Context Retrieval (RAG)**: The Django backend converts the question into a vector and finds the most relevant knowledge documents in **PostgreSQL (`pgvector`)**.
+3. **AI Generation (LLM)**: The retrieved knowledge and question are sent to the LLM to generate an accurate, grounded response.
+4. **Voice Output (TTS)**: The text answer is converted into audio using **TTS (gTTS / Edge-TTS)** and played back instantly on your mobile phone.
 
 ---
 
